@@ -122,4 +122,60 @@ app.post("/v1/messages", requireApiKey, async (req, res) => {
 // ---------- Health check ----------
 app.get("/", (req, res) => res.json({ ok: true, service: "nexia-api", model: MODEL_ID }));
 
+// ---------- Painel de admin (gerar/ver/revogar chaves pelo navegador) ----------
+app.get("/admin", (req, res) => {
+  res.type("html").send(`<!DOCTYPE html>
+<html lang="pt-br"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nexia API - Admin</title>
+<style>
+  body{font-family:system-ui,sans-serif;background:#0a0a0a;color:#eee;margin:0;padding:20px;max-width:560px;margin:0 auto}
+  h1{font-size:20px} label{display:block;margin:14px 0 4px;font-size:13px;color:#aaa}
+  input,button{width:100%;box-sizing:border-box;padding:12px;border-radius:8px;border:1px solid #333;background:#161616;color:#eee;font-size:15px}
+  button{background:#eee;color:#111;font-weight:600;margin-top:10px;cursor:pointer}
+  .card{background:#141414;border:1px solid #262626;border-radius:10px;padding:12px;margin-top:10px;word-break:break-all;font-size:13px}
+  .row{display:flex;justify-content:space-between;align-items:center;gap:8px}
+  .del{width:auto;background:#3a1414;color:#f88;padding:8px 12px;margin:0;flex:none}
+  #keys{margin-top:20px}
+</style></head>
+<body>
+  <h1>Nexia API — Admin</h1>
+  <label>Admin secret</label>
+  <input id="secret" type="password" placeholder="sua ADMIN_SECRET" />
+  <label>Nome/etiqueta da nova chave (opcional)</label>
+  <input id="label" placeholder="ex: app do pedrin" />
+  <button onclick="criar()">Gerar nova chave</button>
+  <button onclick="listar()" style="background:#222;color:#eee;border:1px solid #333">Atualizar lista</button>
+  <div id="keys"></div>
+<script>
+function h(){ return { "x-admin-secret": document.getElementById('secret').value, "Content-Type": "application/json" }; }
+async function criar(){
+  const label = document.getElementById('label').value;
+  const r = await fetch('/v1/keys', { method:'POST', headers:h(), body: JSON.stringify({label}) });
+  const d = await r.json();
+  if(!r.ok){ alert('Erro: ' + (d.error?.message||'')); return; }
+  alert('Chave criada:\\n' + d.key + '\\n\\nCopia agora, ela também vai aparecer na lista.');
+  listar();
+}
+async function revogar(key){
+  if(!confirm('Revogar essa chave?')) return;
+  await fetch('/v1/keys/' + encodeURIComponent(key), { method:'DELETE', headers:h() });
+  listar();
+}
+async function listar(){
+  const r = await fetch('/v1/keys', { headers:h() });
+  const d = await r.json();
+  const el = document.getElementById('keys');
+  if(!r.ok){ el.innerHTML = '<p style="color:#f88">Erro: ' + (d.error?.message||'confere a senha') + '</p>'; return; }
+  if(!d.keys.length){ el.innerHTML = '<p style="color:#888">Nenhuma chave ainda.</p>'; return; }
+  el.innerHTML = d.keys.map(k => \`
+    <div class="card">
+      <div class="row"><b>\${k.label || '(sem nome)'}</b><button class="del" onclick="revogar('\${k.key}')">Revogar</button></div>
+      <div style="margin-top:6px">\${k.key}</div>
+      <div style="color:#888;margin-top:6px">Hoje: \${(k.usedMsToday/3600000).toFixed(2)}h de 5h &nbsp;•&nbsp; Total: \${(k.totalRequests||0)} pedidos</div>
+    </div>\`).join('');
+}
+</script>
+</body></html>`);
+});
+
 app.listen(PORT, () => console.log(`[nexia-api] rodando na porta ${PORT}`));
