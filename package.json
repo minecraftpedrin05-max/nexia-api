@@ -1,0 +1,15 @@
+{
+  "name": "nexia-api",
+  "version": "1.0.0",
+  "description": "API do Nexia - chat completions com chave de API e limite de horas por chave",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^3.0.2",
+    "cors": "^2.8.5",
+    "express": "^4.19.2"
+  }
+}

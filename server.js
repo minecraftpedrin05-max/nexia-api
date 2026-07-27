@@ -1,0 +1,125 @@
+const express = require("express");
+const cors = require("cors");
+const {
+  DAILY_LIMIT_MS,
+  generateKey,
+  getKeyRecord,
+  remainingMs,
+  registerUsage,
+  listKeys,
+  revokeKey,
+} = require("./keys");
+
+const PORT = process.env.PORT || 3000;
+const ADMIN_SECRET = process.env.ADMIN_SECRET || "troque-esse-segredo";
+const MODEL_ID = "HuggingFaceTB/SmolLM2-135M-Instruct";
+
+const app = express();
+app.use(cors());
+app.use(express.json({ limit: "2mb" }));
+
+// ---------- Carrega o modelo uma vez, no boot ----------
+let generatorPromise = null;
+function getGenerator() {
+  if (!generatorPromise) {
+    generatorPromise = import("@huggingface/transformers").then((lib) =>
+      lib.pipeline("text-generation", MODEL_ID, { dtype: "q8" })
+    );
+  }
+  return generatorPromise;
+}
+getGenerator()
+  .then(() => console.log("[nexia-api] modelo carregado, pronto pra receber pedidos"))
+  .catch((e) => console.error("[nexia-api] falha ao carregar modelo:", e));
+
+// ---------- Middlewares ----------
+function requireApiKey(req, res, next) {
+  const key = req.header("x-api-key") || (req.header("authorization") || "").replace(/^Bearer\s+/i, "");
+  if (!key) return res.status(401).json({ error: { type: "authentication_error", message: "Faltou a x-api-key." } });
+  const rec = getKeyRecord(key);
+  if (!rec) return res.status(401).json({ error: { type: "authentication_error", message: "Chave de API inválida." } });
+  req.apiKey = key;
+  req.keyRecord = rec;
+  next();
+}
+
+function requireAdmin(req, res, next) {
+  const secret = req.header("x-admin-secret");
+  if (secret !== ADMIN_SECRET) return res.status(401).json({ error: { type: "authentication_error", message: "Admin secret inválido." } });
+  next();
+}
+
+// ---------- Rotas de administração de chaves ----------
+app.post("/v1/keys", requireAdmin, (req, res) => {
+  const key = generateKey(req.body?.label);
+  res.json({ key, daily_limit_hours: DAILY_LIMIT_MS / 3600000 });
+});
+
+app.get("/v1/keys", requireAdmin, (req, res) => {
+  res.json({ keys: listKeys() });
+});
+
+app.delete("/v1/keys/:key", requireAdmin, (req, res) => {
+  const ok = revokeKey(req.params.key);
+  res.json({ revoked: ok });
+});
+
+// ---------- Rota principal, estilo Anthropic /v1/messages ----------
+app.post("/v1/messages", requireApiKey, async (req, res) => {
+  const remaining = remainingMs(req.apiKey);
+  if (remaining <= 0) {
+    return res.status(429).json({
+      error: {
+        type: "rate_limit_error",
+        message: "Essa chave já usou as 5 horas de geração de hoje. Volta amanhã ou usa outra chave.",
+      },
+    });
+  }
+
+  const { messages, max_tokens, temperature, system } = req.body || {};
+  if (!Array.isArray(messages) || !messages.length) {
+    return res.status(400).json({ error: { type: "invalid_request_error", message: "Manda 'messages' como array [{role, content}]." } });
+  }
+
+  try {
+    const generator = await getGenerator();
+    const chatMessages = [
+      ...(system ? [{ role: "system", content: system }] : []),
+      ...messages.map((m) => ({ role: m.role, content: String(m.content ?? "") })),
+    ];
+
+    const start = Date.now();
+    const output = await generator(chatMessages, {
+      max_new_tokens: Math.min(Math.max(Number(max_tokens) || 512, 1), 1024),
+      temperature: temperature ?? 0.7,
+      top_p: 0.9,
+      do_sample: true,
+      repetition_penalty: 1.15,
+    });
+    const elapsedMs = Date.now() - start;
+    registerUsage(req.apiKey, elapsedMs);
+
+    const lastTurn = output?.[0]?.generated_text?.at?.(-1);
+    const text = (lastTurn?.content || "").trim();
+
+    res.json({
+      id: "msg_" + Math.random().toString(36).slice(2, 12),
+      role: "assistant",
+      model: MODEL_ID,
+      content: [{ type: "text", text }],
+      usage: {
+        generation_ms: elapsedMs,
+        remaining_ms_today: remainingMs(req.apiKey),
+        daily_limit_hours: DAILY_LIMIT_MS / 3600000,
+      },
+    });
+  } catch (err) {
+    console.error("[nexia-api] erro gerando resposta:", err);
+    res.status(500).json({ error: { type: "server_error", message: "Deu erro rodando o modelo. Tenta de novo." } });
+  }
+});
+
+// ---------- Health check ----------
+app.get("/", (req, res) => res.json({ ok: true, service: "nexia-api", model: MODEL_ID }));
+
+app.listen(PORT, () => console.log(`[nexia-api] rodando na porta ${PORT}`));
