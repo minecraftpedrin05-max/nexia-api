@@ -12,7 +12,7 @@ const {
 
 const PORT = process.env.PORT || 3000;
 const ADMIN_SECRET = process.env.ADMIN_SECRET || "troque-esse-segredo";
-const MODEL_ID = "HuggingFaceTB/SmolLM2-135M-Instruct";
+const MODEL_ID = "onnx-community/Qwen2.5-0.5B-Instruct";
 
 const app = express();
 app.use(cors());
@@ -23,7 +23,7 @@ let generatorPromise = null;
 function getGenerator() {
   if (!generatorPromise) {
     generatorPromise = import("@huggingface/transformers").then((lib) =>
-      lib.pipeline("text-generation", MODEL_ID, { dtype: "q8" })
+      lib.pipeline("text-generation", MODEL_ID, { dtype: "q4" })
     );
   }
   return generatorPromise;
