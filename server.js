@@ -12,7 +12,7 @@ const {
 
 const PORT = process.env.PORT || 3000;
 const ADMIN_SECRET = process.env.ADMIN_SECRET || "troque-esse-segredo";
-const MODEL_ID = "onnx-community/Qwen2.5-0.5B-Instruct";
+const MODEL_ID = "HuggingFaceTB/SmolLM2-360M-Instruct";
 
 const app = express();
 app.use(cors());
