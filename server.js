@@ -49,6 +49,27 @@ function requireAdmin(req, res, next) {
   next();
 }
 
+// ---------- Rota pública: qualquer um pode gerar SUA PRÓPRIA chave (sem senha) ----------
+// Protegido só por um limite de chaves por IP/dia, pra não virar fábrica de chaves.
+const selfServeByIp = new Map(); // ip -> { day, count }
+const SELF_SERVE_DAILY_LIMIT = 3;
+
+app.post("/v1/keys/self", (req, res) => {
+  const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.socket.remoteAddress || "unknown";
+  const today = new Date().toISOString().slice(0, 10);
+  const entry = selfServeByIp.get(ip);
+  if (!entry || entry.day !== today) {
+    selfServeByIp.set(ip, { day: today, count: 1 });
+  } else {
+    if (entry.count >= SELF_SERVE_DAILY_LIMIT) {
+      return res.status(429).json({ error: { type: "rate_limit_error", message: "Limite de chaves novas por hoje atingido. Tenta amanhã." } });
+    }
+    entry.count += 1;
+  }
+  const key = generateKey(req.body?.label || "app nexia");
+  res.json({ key, daily_limit_hours: DAILY_LIMIT_MS / 3600000 });
+});
+
 // ---------- Rotas de administração de chaves ----------
 app.post("/v1/keys", requireAdmin, (req, res) => {
   const key = generateKey(req.body?.label);
@@ -146,14 +167,25 @@ app.get("/admin", (req, res) => {
   <button onclick="criar()">Gerar nova chave</button>
   <button onclick="listar()" style="background:#222;color:#eee;border:1px solid #333">Atualizar lista</button>
   <div id="keys"></div>
+  <div id="newkey"></div>
 <script>
 function h(){ return { "x-admin-secret": document.getElementById('secret').value, "Content-Type": "application/json" }; }
+async function copiar(txt, btn){
+  try { await navigator.clipboard.writeText(txt); btn.textContent = "Copiado!"; }
+  catch(e){ btn.textContent = "Seleciona e copia manual"; }
+  setTimeout(()=> btn.textContent = "Copiar", 1800);
+}
 async function criar(){
   const label = document.getElementById('label').value;
   const r = await fetch('/v1/keys', { method:'POST', headers:h(), body: JSON.stringify({label}) });
   const d = await r.json();
   if(!r.ok){ alert('Erro: ' + (d.error?.message||'')); return; }
-  alert('Chave criada:\\n' + d.key + '\\n\\nCopia agora, ela também vai aparecer na lista.');
+  document.getElementById('newkey').innerHTML = \`
+    <div class="card" style="border-color:#3a3">
+      <div style="color:#8f8;margin-bottom:6px">Chave criada — copia agora:</div>
+      <input readonly value="\${d.key}" onclick="this.select()" style="width:100%;background:#0a0a0a;border:1px solid #333;border-radius:6px;padding:8px;color:#eee;font-size:12px;margin-bottom:8px" />
+      <button onclick="copiar('\${d.key}', this)" style="width:auto;padding:8px 14px;margin:0">Copiar</button>
+    </div>\`;
   listar();
 }
 async function revogar(key){
