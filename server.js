@@ -12,7 +12,15 @@ const {
 
 const PORT = process.env.PORT || 3000;
 const ADMIN_SECRET = process.env.ADMIN_SECRET || "troque-esse-segredo";
-const MODEL_ID = "HuggingFaceTB/SmolLM2-360M-Instruct";
+const MODEL_ID = "HuggingFaceTB/SmolLM2-135M-Instruct";
+
+// Mesma técnica do app: exemplos fixos pra calibrar o "jeito de falar" do modelo pequeno.
+const FEW_SHOT_EXAMPLES = [
+  { role: "user", content: "Oi, tudo bem?" },
+  { role: "assistant", content: "Fala! Tudo certo por aqui, e você? Se precisar de alguma coisa é só falar." },
+  { role: "user", content: "Qual a capital do Brasil?" },
+  { role: "assistant", content: "A capital do Brasil é Brasília." },
+];
 
 const app = express();
 app.use(cors());
@@ -106,16 +114,17 @@ app.post("/v1/messages", requireApiKey, async (req, res) => {
     const generator = await getGenerator();
     const chatMessages = [
       ...(system ? [{ role: "system", content: system }] : []),
+      ...FEW_SHOT_EXAMPLES,
       ...messages.map((m) => ({ role: m.role, content: String(m.content ?? "") })),
     ];
 
     const start = Date.now();
     const output = await generator(chatMessages, {
-      max_new_tokens: Math.min(Math.max(Number(max_tokens) || 512, 1), 1024),
-      temperature: temperature ?? 0.7,
-      top_p: 0.9,
+      max_new_tokens: Math.min(Math.max(Number(max_tokens) || 300, 1), 600),
+      temperature: temperature ?? 0.3,
+      top_p: 0.85,
       do_sample: true,
-      repetition_penalty: 1.15,
+      repetition_penalty: 1.1,
     });
     const elapsedMs = Date.now() - start;
     registerUsage(req.apiKey, elapsedMs);
@@ -211,3 +220,4 @@ async function listar(){
 });
 
 app.listen(PORT, () => console.log(`[nexia-api] rodando na porta ${PORT}`));
+      
